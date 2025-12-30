@@ -44,6 +44,7 @@ metadata {
 // ---- lifecycle ----
 void installed() {
     if (debugLogging) runIn(1800, "logsOff")
+    state.driverVersion = DRIVER_VERSION
     log.info "Dahua WhiteLight driver v${DRIVER_VERSION} installed"
     initialize()
 }
@@ -51,6 +52,7 @@ void installed() {
 void updated() {
     unschedule()
     if (debugLogging) runIn(1800, "logsOff")
+    state.driverVersion = DRIVER_VERSION
     log.info "Dahua WhiteLight driver v${DRIVER_VERSION} updated"
     initialize()
 }
@@ -207,7 +209,7 @@ Map dahuaGetOnce(String path, Boolean verifyOk) {
 
     String bodyText = ""
     httpGet(params) { resp ->
-        bodyText = (resp?.data != null) ? resp.data.toString() : ""
+        bodyText = readBodyText(resp?.data)
     }
 
     if (verifyOk) {
@@ -241,7 +243,7 @@ Map getOrFetchChallenge(String challengePath) {
     String header = null
     try {
         httpGet([uri: url, timeout: (httpTimeoutSecs ?: 8) as Integer, headers: ["Connection":"close"]]) { resp ->
-            header = extractWwwAuthenticate(resp)
+            header = extractWwwAuthenticateFromResp(resp)
             parsed = parseDigestChallengeFromText(header)
         }
     } catch (Exception e) {
@@ -293,33 +295,10 @@ Map parseDigestChallengeFromText(String text) {
     return out
 }
 
-void digestChallengeHandler(resp, data) {
-    state.challengePending = false
-    try {
-        String header = extractWwwAuthenticate(resp)
-        logDebug "Digest challenge response: status=${resp?.status}, headerPresent=${header != null}"
-        Map parsed = parseDigestChallengeFromText(header)
-        if (parsed?.realm && parsed?.nonce) {
-            state.digestChallenge = parsed
-            return
-        }
-
-        String status = resp?.status != null ? resp.status.toString() : "unknown"
-        if (header) {
-            state.challengeError = "Invalid Digest header (status ${status})"
-        } else {
-            String err = resp?.error ? resp.error.toString() : null
-            state.challengeError = err ?: "WWW-Authenticate header missing (status ${status})"
-        }
-    } catch (Exception e) {
-        state.challengeError = e?.message ?: e?.toString()
-    }
-}
-
 String extractWwwAuthenticateFromException(Exception e) {
     try {
         def resp = e?.response
-        String header = extractWwwAuthenticate(resp)
+        String header = extractWwwAuthenticateFromResp(resp)
         if (header) return header
     } catch (Exception ignored) {
     }
@@ -342,32 +321,44 @@ String extractWwwAuthenticateFromText(String text) {
     return s.replaceFirst(/^[Ww][Ww][Ww]-[Aa]uthenticate:\s*/, "")
 }
 
-String extractWwwAuthenticate(resp) {
+String extractWwwAuthenticateFromResp(resp) {
+    if (resp == null) return null
     try {
         def headers = resp?.headers
         if (headers) {
             def direct = headers["WWW-Authenticate"] ?: headers["www-authenticate"]
             if (direct) return direct.toString()
+            def match = headers.find { k, v -> k?.toString()?.equalsIgnoreCase("WWW-Authenticate") }
+            if (match) return match?.value?.toString()
         }
     } catch (Exception ignored) {
     }
     try {
-        def direct = resp?.getHeaders("WWW-Authenticate")
-        if (direct) {
-            if (direct instanceof List) return direct[0]?.toString()
-            return direct.toString()
-        }
-    } catch (Exception ignored) {
-    }
-    try {
-        def all = resp?.getHeaders()
-        if (all) {
-            def match = all.find { it?.name?.equalsIgnoreCase("WWW-Authenticate") }
+        def headers = resp?.getHeaders()
+        if (headers) {
+            def direct = headers["WWW-Authenticate"] ?: headers["www-authenticate"]
+            if (direct) return direct.toString()
+            def match = headers.find { k, v -> k?.toString()?.equalsIgnoreCase("WWW-Authenticate") }
             if (match) return match?.value?.toString()
         }
     } catch (Exception ignored) {
     }
     return null
+}
+
+String readBodyText(data) {
+    if (data == null) return ""
+    if (data instanceof String) return data
+    if (data instanceof byte[]) return new String((byte[])data)
+    try {
+        if (data.respondsTo("getText")) return data.getText()
+    } catch (Exception ignored) {
+    }
+    try {
+        if (data.respondsTo("text")) return data.text
+    } catch (Exception ignored) {
+    }
+    return data.toString()
 }
 
 String requestUriFromUrl(String url) {

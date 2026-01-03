@@ -74,7 +74,7 @@ Camera responds `401` with `WWW-Authenticate: Digest ...`, so Digest is required
 
 ## Digest Challenge Handling
 
-The driver fetches the digest challenge (realm/nonce/qop/opaque) using `asynchttpGet` so we can reliably read the `WWW-Authenticate` header from the response headers in Hubitat.
+The driver fetches the digest challenge (realm/nonce/qop/opaque) using a synchronous `httpGet` to capture the `WWW-Authenticate` header from the response.
 
 ## Quick Start
 1. Copy the driver Groovy file into Hubitat:

@@ -3,12 +3,13 @@
 This file explains the current state of the work and how to continue it in an IDE-driven workflow.
 
 ## Goal
-Maintain a Hubitat Groovy driver that:
-1. Controls Dahua white light (On/Off) reliably via HTTP Digest auth.
-2. Controls brightness (0–100) via Lighting_V2.
-3. Syncs state (polling + refresh).
-4. Has robust retry/timeout logic.
-5. Has clear diagnostics for network vs auth vs parsing failures.
+Maintain two Hubitat Groovy drivers:
+1. Dahua WhiteLight (Digest): on/off + brightness control with sync and retries.
+2. Valetudo REST Robot: state reporting and command control for Valetudo v2.
+
+Always keep repo documentation in sync with code changes:
+- Update `README.md` and `dahua/README.md` when Dahua behavior changes.
+- Update `README.md` when Valetudo behavior changes.
 
 ## Current Known-Working Device Behavior (IPC-L46N-USA)
 
@@ -52,8 +53,7 @@ Therefore driver must:
 - Hubitat Groovy environment is not a full JVM app:
   - Use `@Field` for constants (NOT `private static final` top-level)
   - Cron expression parsing can be finicky; `schedule("0 */${m} * ? * *", ...)` works, but ensure `${m}` interpolation is valid Groovy string.
-- `httpGet` does not reliably expose response headers for 401 via exception handling.
-- Use `asynchttpGet` to capture headers (WWW-Authenticate) reliably.
+- `httpGet` does not reliably expose response headers for 401 via exception handling, so prefer parsing headers on the response object when possible.
 
 ## Driver Architecture Summary
 
@@ -88,10 +88,10 @@ Therefore driver must:
 - Read Lighting_V2; update level state
 
 ### Digest Challenge
-- Fetch via `asynchttpGet` to any endpoint that returns 401 + WWW-Authenticate (systemInfo is fine).
-- Parse header into map (realm/nonce/qop/opaque/algorithm)
-- Cache in `state.digestChallenge`
-- Maintain `state.ncInt`
+- Fetch via synchronous `httpGet` to an endpoint that returns 401 + `WWW-Authenticate`.
+- Parse header into map (realm/nonce/qop/opaque/algorithm).
+- Cache in `state.digestChallenge`.
+- Maintain `state.ncInt`.
 
 ### Retry / Timeout
 - Preferences:
@@ -103,4 +103,7 @@ Therefore driver must:
 
 ## Development Workflow in VS Code
 
-### Repo layout suggestion
+### Repo layout
+- `dahua/` Dahua white light driver + docs + tools.
+- `valetudo/` Valetudo driver.
+- `README.md` outer repo overview.

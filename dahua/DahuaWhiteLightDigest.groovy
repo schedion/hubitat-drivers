@@ -17,6 +17,9 @@ metadata {
         capability "SwitchLevel"
         capability "Refresh"
         capability "Initialize"
+        command "setFloodlightMode", [[name: "Mode*", type: "ENUM", constraints: ["manual", "motion", "pir", "scheduled"]]]
+        command "setColorTemperature", [[name: "Color Temperature*", type: "ENUM", constraints: ["cool", "warm"]]]
+        command "setVideoInMode", [[name: "Profile*", type: "ENUM", constraints: ["day", "night"]]]
     }
 
     preferences {
@@ -39,7 +42,10 @@ metadata {
 @Field final Integer SECURITY_LIGHT_TYPE = 1   // WhiteLight control type
 @Field final Integer IO_ON  = 1
 @Field final Integer IO_OFF = 2
-@Field final String DRIVER_VERSION = "1.0.1"
+@Field final String DRIVER_VERSION = "1.0.5"
+@Field final Map FLOODLIGHT_MODE_MAP = ["manual":"2", "motion":"0", "pir":"4", "scheduled":"3"]
+@Field final Map COLOR_TEMPERATURE_MAP = ["cool":"1", "warm":"2"]
+@Field final Map VIDEO_IN_MODE_MAP = ["day":"0", "night":"1"]
 
 // ---- lifecycle ----
 void installed() {
@@ -121,6 +127,48 @@ void setLevel(Number value) {
     sendEvent(name: "switch", value: "on")
 }
 
+void setFloodlightMode(String modeName) {
+    String key = modeName?.toLowerCase()
+    String val = FLOODLIGHT_MODE_MAP.get(key)
+    if (!val) {
+        log.warn "Unknown floodlight mode '${modeName}'. Use: manual, motion, pir, scheduled"
+        return
+    }
+    String path = "/cgi-bin/configManager.cgi?action=setConfig&All.FloodLightMode.Mode=${val}"
+    dahuaGet(path, true)
+    state.floodlightMode = val
+    state.floodlightModeName = key
+}
+
+void setColorTemperature(String tempName) {
+    String key = tempName?.toLowerCase()
+    String val = COLOR_TEMPERATURE_MAP.get(key)
+    if (!val) {
+        log.warn "Unknown color temperature '${tempName}'. Use: cool, warm"
+        return
+    }
+    for (Integer p in [0, 1, 2]) {
+        String path = "/cgi-bin/configManager.cgi?action=setConfig" +
+                "&All.Lighting_V2[0][${p}][1].MiddleLight[0].ColorTemperature=${val}"
+        dahuaGet(path, true)
+    }
+    state.colorTemperature = val
+    state.colorTemperatureName = key
+}
+
+void setVideoInMode(String profileName) {
+    String key = profileName?.toLowerCase()
+    String val = VIDEO_IN_MODE_MAP.get(key)
+    if (!val) {
+        log.warn "Unknown profile '${profileName}'. Use: day, night"
+        return
+    }
+    String path = "/cgi-bin/configManager.cgi?action=setConfig&VideoInMode[0].Config[0]=${val}"
+    dahuaGet(path, true)
+    state.videoInMode = val
+    state.videoInModeName = key
+}
+
 void refresh() {
     // 1) Switch state from coaxial status
     Map st = dahuaGet("/cgi-bin/coaxialControlIO.cgi?action=getStatus&channel=${safeChannel()}", false)
@@ -132,11 +180,40 @@ void refresh() {
         logDebug "refresh: status.status.WhiteLight missing. Keys=${st?.keySet()}"
     }
 
-    // 2) Brightness readback from Lighting_V2 (best-effort)
-    Map lv2 = dahuaGet("/cgi-bin/configManager.cgi?action=getConfig&name=Lighting_V2", false)
-    Integer level = extractWhiteLightLevel(lv2)
+    // 2) Readback from All config (best-effort)
+    Map allCfg = dahuaGet("/cgi-bin/configManager.cgi?action=getConfig&name=All", false)
+    Integer level = extractWhiteLightLevelFromAll(allCfg)
     if (level != null) {
         sendEvent(name: "level", value: level, unit: "%")
+    }
+
+    // 3) Floodlight mode state (best-effort)
+    String modeRaw = allCfg?.get("table.All.FloodLightMode.Mode")
+    if (modeRaw != null) {
+        state.floodlightMode = modeRaw.toString()
+        state.floodlightModeName = floodlightModeName(modeRaw.toString())
+    }
+
+    // 4) Color temperature state (best-effort)
+    String ctRaw = allCfg?.get("table.All.Lighting_V2[0][0][1].MiddleLight[0].ColorTemperature")
+    if (ctRaw == null) {
+        for (Integer p in [0, 1, 2]) {
+            String k = "table.All.Lighting_V2[0][${p}][1].MiddleLight[0].ColorTemperature"
+            if (allCfg?.containsKey(k)) {
+                ctRaw = allCfg.get(k)
+                break
+            }
+        }
+    }
+    if (ctRaw != null) {
+        state.colorTemperature = ctRaw.toString()
+    }
+
+    // 5) Video input mode state (best-effort)
+    String vimRaw = allCfg?.get("table.All.VideoInMode[0].Config[0]")
+    if (vimRaw != null) {
+        state.videoInMode = vimRaw.toString()
+        state.videoInModeName = videoInModeName(vimRaw.toString())
     }
 }
 
@@ -168,7 +245,7 @@ Map dahuaGet(String path, Boolean verifyOk) {
         } catch (Exception e) {
             lastEx = e
             String msg = (e?.message ?: "").toLowerCase()
-            boolean likelyAuth = msg.contains("401") || msg.contains("unauthorized") || msg.contains("www-authenticate")
+            boolean likelyAuth = msg.contains("401") || msg.contains("unauthorized")
             boolean likelyTimeout = msg.contains("timed out") || msg.contains("timeout")
             logDebug "HTTP attempt ${attempt}/${tries} failed: ${e.class.simpleName}: ${e.message}"
 
@@ -450,6 +527,46 @@ Integer extractWhiteLightLevel(Map lv2) {
     } catch (Exception ignored) {
         return null
     }
+}
+
+
+Integer extractWhiteLightLevelFromAll(Map allCfg) {
+    if (!allCfg) return null
+    String v = allCfg.get("table.All.Lighting_V2[0][0][1].MiddleLight[0].Light")
+    if (v == null) {
+        for (Integer p in [0, 1, 2]) {
+            String k = "table.All.Lighting_V2[0][${p}][1].MiddleLight[0].Light"
+            if (allCfg.containsKey(k)) {
+                v = allCfg.get(k)
+                break
+            }
+        }
+    }
+    if (v == null) return null
+    try {
+        Integer lvl = v.toString().toInteger()
+        return Math.max(0, Math.min(100, lvl))
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+String floodlightModeName(String val) {
+    if (val == null) return null
+    def match = FLOODLIGHT_MODE_MAP.find { k, v -> v == val }
+    return match ? match.key : null
+}
+
+String colorTemperatureName(String val) {
+    if (val == null) return null
+    def match = COLOR_TEMPERATURE_MAP.find { k, v -> v == val }
+    return match ? match.key : null
+}
+
+String videoInModeName(String val) {
+    if (val == null) return null
+    def match = VIDEO_IN_MODE_MAP.find { k, v -> v == val }
+    return match ? match.key : null
 }
 
 void logDebug(String msg) {

@@ -70,7 +70,13 @@ Camera responds `401` with `WWW-Authenticate: Digest ...`, so Digest is required
 
 `refresh()` reads:
 - WhiteLight on/off from `coaxialControlIO` status
-- Brightness from `Lighting_V2`
+- Brightness from `All` config (`table.All.Lighting_V2[0][P][1].MiddleLight[0].Light`)
+- Floodlight mode from `All` config (`table.All.FloodLightMode.Mode`)
+  - Values: `2` manual, `0` motion, `4` PIR, `3` scheduled
+- Color temperature from `All` config (`table.All.Lighting_V2[0][P][1].MiddleLight[0].ColorTemperature`)
+  - Values: `1` cool, `2` warm
+- Video input mode from `All` config (`table.All.VideoInMode[0].Config[0]`)
+  - Values: `0` day, `1` night
 
 ## Digest Challenge Handling
 
@@ -111,3 +117,21 @@ Some Dahua firmwares acknowledge config changes but won’t actuate until:
 - Driver stores password in device preferences (Hubitat standard).
 - Put cameras on an isolated VLAN and allow Hubitat access only.
 - Consider creating a camera user with minimal permissions.
+## Mode Controls
+
+### Set Floodlight Mode
+Use the command `setFloodlightMode` with one of:
+- manual
+- motion
+- pir
+- scheduled
+
+### Set Color Temperature
+Use the command `setColorTemperature` with one of:
+- cool
+- warm
+
+### Set Profile (VideoInMode)
+Use the command `setVideoInMode` with one of:
+- day (Config=0)
+- night (Config=1)
